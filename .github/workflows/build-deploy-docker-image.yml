@@ -1,0 +1,54 @@
+name: Deploy Docker Image to AWS ECR
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release Version
+        default: v1.0.0
+        required: true
+jobs:
+  build-deploy:
+    name: Build docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up Go 1.14.13
+        uses: actions/setup-go@v1
+        with:
+          go-version: 1.14.13
+      - name: Configure git for private modules
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          GOPRIVATE: "github.com/strikesecurity"
+          GONOSUMDB: github.com/strikesecurity/*
+        run: git config --global url."https://tuckyapps:${GIT_TOKEN}@github.com".insteadOf "https://github.com"
+      - name: Run Go Tests
+        run: go test -cover ./... | grep coverage
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+      - name: Build Image
+        run: docker build --build-arg github_user=tuckyapps --build-arg github_token=$GIT_TOKEN . -t 814433702485.dkr.ecr.us-east-1.amazonaws.com/bootcamp-go
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Push image to ECR
+        run: docker push 814433702485.dkr.ecr.us-east-1.amazonaws.com/bootcamp-go
+      - name: Download task definition
+        run: aws ecs describe-task-definition --task-definition bootcamp-go --query taskDefinition > task-definition.json
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          service: bootcamp-go
+          cluster: cluster
+          wait-for-service-stability: true
